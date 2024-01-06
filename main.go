@@ -15,26 +15,26 @@ import (
 )
 
 type azureBlobWriter struct {
-	containerClient *container.Client
-	fileName        string
-	logBuffer       chan string
-	flushSize       int
-	flushInterval   int
-	lastFlushTime   time.Time
-	flushInProgress bool
-	logs            []string
+	containerClient  *container.Client
+	fileName         string
+	logBuffer        chan string
+	logSize          int
+	logInterval      int
+	lastLogTime      time.Time
+	logginInProgress bool
+	logs             []string
 }
 
 var flushTimer *time.Ticker
 
-// Accepts BlobConnectionString,ContainerName,FlushSize,FlushInterval
+// Accepts BlobConnectionString,ContainerName,LogSize,LogInterval,FileName
 //
-// flushSize : The log item limit to flush to blob
+// logSize : The log item limit to send logs to azure blob
 //
-// flushInterval: The interval to flush logs to blob in seconds
+// logInterval: The interval in seconds to send logs to azure blob
 //
 // fileName if empty then the logs get stored in the form of {year}/{month}/{day}/{hour}/logs.json
-func NewAzureBlobWriter(connectionString string, containerName string, flushSize int, flushInterval int, fileName string) (*azureBlobWriter, error) {
+func NewAzureBlobWriter(connectionString string, containerName string, logSize int, logInterval int, fileName string) (*azureBlobWriter, error) {
 
 	azblobClient, err := azblob.NewClientFromConnectionString(connectionString, nil)
 
@@ -46,12 +46,12 @@ func NewAzureBlobWriter(connectionString string, containerName string, flushSize
 
 	azureBlobWriter := &azureBlobWriter{
 		containerClient: containerClient,
-		logBuffer:       make(chan string, flushSize),
-		flushSize:       flushSize,
-		flushInterval:   flushInterval,
-		lastFlushTime:   time.Now(),
+		logBuffer:       make(chan string, logSize),
+		logSize:         logSize,
+		logInterval:     logInterval,
+		lastLogTime:     time.Now(),
 		fileName:        fileName,
-		logs:            make([]string, 0, flushSize),
+		logs:            make([]string, 0, logSize),
 	}
 
 	go azureBlobWriter.startTimer()
@@ -76,22 +76,22 @@ func (w *azureBlobWriter) Write(p []byte) (n int, err error) {
 }
 
 func (w *azureBlobWriter) flushBufferedLogs() {
-	if w.flushInProgress {
+	if w.logginInProgress {
 		return
 	}
 
-	w.flushInProgress = true
+	w.logginInProgress = true
 
 	go func() {
 		defer func() {
-			w.flushInProgress = false
+			w.logginInProgress = false
 		}()
 
 		for {
 			select {
 			case logEntry := <-w.logBuffer:
 				w.logs = append(w.logs, logEntry)
-				if len(w.logs) >= w.flushSize {
+				if len(w.logs) >= w.logSize {
 					w.flushLogs(w.logs)
 				}
 			default:
@@ -106,14 +106,14 @@ func (w *azureBlobWriter) flushBufferedLogs() {
 }
 
 func (w *azureBlobWriter) startTimer() {
-	flushTimer = time.NewTicker(time.Duration(w.flushInterval) * time.Second)
-	defer flushTimer.Reset(time.Duration(w.flushInterval) * time.Second)
+	flushTimer = time.NewTicker(time.Duration(w.logInterval) * time.Second)
+	defer flushTimer.Reset(time.Duration(w.logInterval) * time.Second)
 	for {
 		select {
 		case <-flushTimer.C:
 			// Time to flush logs
 			w.flushBufferedLogs()
-			flushTimer.Reset(time.Duration(w.flushInterval) * time.Second)
+			flushTimer.Reset(time.Duration(w.logInterval) * time.Second)
 		}
 	}
 }
@@ -130,7 +130,7 @@ func (w *azureBlobWriter) flushLogs(logs []string) {
 
 	defer func() {
 		w.logs = w.logs[:0]
-		w.lastFlushTime = time.Now()
+		w.lastLogTime = time.Now()
 	}()
 
 	// Check if blob already exists, create it if not
